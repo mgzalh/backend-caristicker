@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CariSticker — Mesin Pencari Stiker & Meme WhatsApp</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* Masonry grid berbasis CSS columns - ringan, tanpa library JS tambahan */
+    .masonry {
+      column-count: 1;
+      column-gap: 1rem;
+    }
+
+    @media (min-width: 640px) {
+      .masonry {
+        column-count: 2;
+      }
+    }
+
+    @media (min-width: 1024px) {
+      .masonry {
+        column-count: 3;
+      }
+    }
+
+    @media (min-width: 1280px) {
+      .masonry {
+        column-count: 4;
+      }
+    }
+
+    .masonry-item {
+      break-inside: avoid;
+      margin-bottom: 1rem;
+    }
+
+    @keyframes spin-slow {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    .spinner {
+      animation: spin-slow 1s linear infinite;
+    }
+
+    .fade-in {
+      animation: fadeIn 0.35s ease-out forwards;
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(8px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .toast {
+      animation: fadeIn 0.2s ease-out forwards;
+    }
+
+    ::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: #4f46e5;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+
+<body class="bg-slate-950 text-slate-100 min-h-screen">
+
+  <!-- ===== HEADER / HERO / SEARCH BAR ===== -->
+  <header class="px-4 pt-14 pb-8 text-center">
+    <h1
+      class="text-3xl sm:text-5xl font-extrabold tracking-tight bg-gradient-to-r from-indigo-400 via-fuchsia-400 to-amber-300 bg-clip-text text-transparent">
+      CariStiker🔍
+    </h1>
+    <p class="mt-3 text-slate-400 text-sm sm:text-base max-w-xl mx-auto">
+      Cari stiker & meme WhatsApp langsung dari internet — dipindai &amp; dibaca
+      teksnya secara real-time dengan OCR + Fuzzy Search.
+    </p>
+
+    <form id="search-form" class="mt-8 max-w-2xl mx-auto flex items-center gap-2 px-2">
+      <div class="relative flex-1">
+        <input id="search-input" type="text" required placeholder="Contoh: kucing ngantuk, semangat senin, baper..."
+          class="w-full rounded-2xl bg-slate-900 border border-slate-700 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/40 outline-none px-5 py-4 text-base sm:text-lg placeholder:text-slate-500 transition" />
+      </div>
+      <button type="submit" id="search-btn"
+        class="shrink-0 rounded-2xl bg-indigo-600 hover:bg-indigo-500 active:scale-95 transition px-5 sm:px-7 py-4 font-semibold text-base sm:text-lg shadow-lg shadow-indigo-900/50">
+        Cari
+      </button>
+    </form>
+  </header>
+
+  <!-- ===== STATUS / LOADING AREA ===== -->
+  <div id="status-area" class="px-4 max-w-2xl mx-auto text-center mb-6 hidden">
+    <div class="inline-flex items-center gap-3 bg-slate-900/70 border border-slate-700 rounded-full px-5 py-3">
+      <svg id="spinner" class="spinner h-5 w-5 text-indigo-400" viewBox="0 0 24 24" fill="none">
+        <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" stroke-opacity="0.25" />
+        <path d="M22 12a10 10 0 0 0-10-10" stroke="currentColor" stroke-width="3" stroke-linecap="round" />
+      </svg>
+      <span id="status-text" class="text-sm sm:text-base text-slate-300">Sedang memindai gambar di internet...</span>
+    </div>
+  </div>
+
+  <!-- ===== EMPTY / ERROR STATE ===== -->
+  <div id="empty-state" class="hidden text-center px-4 mt-10 text-slate-400">
+    <p class="text-lg">😕 Tidak ada stiker yang cocok ditemukan.</p>
+    <p class="text-sm mt-1">Coba kata kunci lain yang lebih sederhana, ya.</p>
+  </div>
+
+  <div id="error-state" class="hidden text-center px-4 mt-10">
+    <p class="text-lg text-rose-400" id="error-text">Terjadi kesalahan.</p>
+  </div>
+
+  <!-- ===== RESULTS (MASONRY GRID) ===== -->
+  <main class="px-4 sm:px-8 pb-20 max-w-7xl mx-auto">
+    <div id="results-meta" class="hidden text-sm text-slate-400 mb-4 text-center"></div>
+    <div id="masonry" class="masonry"></div>
+  </main>
+
+  <!-- ===== TOAST (untuk feedback copy URL) ===== -->
+  <div id="toast"
+    class="hidden fixed bottom-6 left-1/2 -translate-x-1/2 bg-emerald-600 text-white px-5 py-3 rounded-xl shadow-lg text-sm font-medium z-50">
+  </div>
+
+  <footer class="text-center text-xs text-slate-600 pb-8">
+    Dibuat untuk MVP — stateless, tanpa database. Hasil gambar bersumber dari pihak ketiga di internet.
+  </footer>
+
+  <script>
+    // ====== KONFIGURASI ======
+    // Ganti URL ini sesuai alamat backend FastAPI Anda saat deploy.
+    const API_BASE_URL = "https://backend-caristicker.onrender.com";
+
+    // ====== ELEMEN DOM ======
+    const form = document.getElementById("search-form");
+    const input = document.getElementById("search-input");
+    const searchBtn = document.getElementById("search-btn");
+    const statusArea = document.getElementById("status-area");
+    const statusText = document.getElementById("status-text");
+    const masonry = document.getElementById("masonry");
+    const emptyState = document.getElementById("empty-state");
+    const errorState = document.getElementById("error-state");
+    const errorText = document.getElementById("error-text");
+    const resultsMeta = document.getElementById("results-meta");
+    const toast = document.getElementById("toast");
+
+    // Teks status yang berganti-ganti supaya proses panjang terasa hidup
+    const STATUS_MESSAGES = [
+      "Sedang memindai gambar di internet...",
+      "Mengunduh kandidat stiker ke memori...",
+      "Membaca teks di dalam gambar (OCR)...",
+      "Mencocokkan dengan kata kunci kamu...",
+      "Hampir selesai, menyusun hasil terbaik...",
+    ];
+    let statusInterval = null;
+
+    function startStatusCycle() {
+      let idx = 0;
+      statusText.textContent = STATUS_MESSAGES[0];
+      statusInterval = setInterval(() => {
+        idx = (idx + 1) % STATUS_MESSAGES.length;
+        statusText.textContent = STATUS_MESSAGES[idx];
+      }, 2200);
+    }
+
+    function stopStatusCycle() {
+      if (statusInterval) clearInterval(statusInterval);
+      statusInterval = null;
+    }
+
+    function showToast(message) {
+      toast.textContent = message;
+      toast.classList.remove("hidden");
+      toast.classList.add("toast");
+      setTimeout(() => {
+        toast.classList.add("hidden");
+      }, 1800);
+    }
+
+    function resetUI() {
+      masonry.innerHTML = "";
+      emptyState.classList.add("hidden");
+      errorState.classList.add("hidden");
+      resultsMeta.classList.add("hidden");
+    }
+
+    function setLoading(isLoading) {
+      if (isLoading) {
+        searchBtn.disabled = true;
+        searchBtn.classList.add("opacity-60", "cursor-not-allowed");
+        statusArea.classList.remove("hidden");
+        startStatusCycle();
+      } else {
+        searchBtn.disabled = false;
+        searchBtn.classList.remove("opacity-60", "cursor-not-allowed");
+        statusArea.classList.add("hidden");
+        stopStatusCycle();
+      }
+    }
+
+    function createCard(item) {
+      const card = document.createElement("div");
+      card.className = "masonry-item fade-in group relative rounded-xl overflow-hidden bg-slate-900 border border-slate-800 hover:border-indigo-500/60 transition";
+
+      const img = document.createElement("img");
+      img.src = item.image_url;
+      img.loading = "lazy";
+      img.alt = item.matched_text || "stiker";
+      img.className = "w-full h-auto object-cover block";
+      img.onerror = () => { card.remove(); }; // jika link gambar mati, hilangkan kartu
+
+      // Overlay aksi yang muncul saat hover
+      const overlay = document.createElement("div");
+      overlay.className = "absolute inset-0 bg-black/0 group-hover:bg-black/55 transition flex flex-col items-center justify-center gap-2 opacity-0 group-hover:opacity-100";
+
+      const openBtn = document.createElement("a");
+      openBtn.href = item.image_url;
+      openBtn.target = "_blank";
+      openBtn.rel = "noopener noreferrer";
+      openBtn.textContent = "🔗 Buka Gambar";
+      openBtn.className = "bg-white text-slate-900 text-sm font-semibold px-4 py-2 rounded-lg hover:bg-slate-200 transition";
+
+      const copyBtn = document.createElement("button");
+      copyBtn.textContent = "📋 Copy Image URL";
+      copyBtn.className = "bg-indigo-600 text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-indigo-500 transition";
+      copyBtn.addEventListener("click", async (e) => {
+        e.preventDefault();
+        try {
+          await navigator.clipboard.writeText(item.image_url);
+          showToast("URL gambar disalin!");
+        } catch {
+          showToast("Gagal menyalin URL.");
+        }
+      });
+
+      const downloadBtn = document.createElement("button");
+      downloadBtn.textContent = "⬇️ Unduh";
+      downloadBtn.className = "bg-amber-600 text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-amber-500 transition";
+      downloadBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        const downloadUrl = `${API_BASE_URL}/download?url=${encodeURIComponent(item.image_url)}`;
+        window.open(downloadUrl, "_blank");
+      });
+
+      const scoreBadge = document.createElement("span");
+      scoreBadge.textContent = `Cocok ${item.score}%`;
+      scoreBadge.className = "absolute top-2 right-2 bg-emerald-600/90 text-[11px] font-bold px-2 py-1 rounded-full";
+
+      overlay.appendChild(openBtn);
+      overlay.appendChild(copyBtn);
+      overlay.appendChild(downloadBtn);
+      card.appendChild(img);
+      card.appendChild(overlay);
+      card.appendChild(scoreBadge);
+
+      return card;
+    }
+
+    function renderResults(data) {
+      resetUI();
+
+      resultsMeta.classList.remove("hidden");
+      resultsMeta.textContent = `Ditemukan ${data.total_matched} stiker cocok dari ${data.total_scraped} kandidat untuk "${data.query}"`;
+
+      if (data.errors && data.errors.length > 0) {
+        renderError("Gagal mencari gambar: " + data.errors[0]);
+        return;
+      }
+
+      if (!data.results || data.results.length === 0) {
+        emptyState.classList.remove("hidden");
+        return;
+      }
+
+      data.results.forEach((item) => {
+        masonry.appendChild(createCard(item));
+      });
+    }
+
+    function renderError(message) {
+      resetUI();
+      errorState.classList.remove("hidden");
+      errorText.textContent = message;
+    }
+
+    async function performSearch(query) {
+      setLoading(true);
+      resetUI();
+
+      try {
+        const url = `${API_BASE_URL}/search?q=${encodeURIComponent(query)}`;
+        const response = await fetch(url);
+
+        if (!response.ok) {
+          let detail = `Server merespons dengan status ${response.status}.`;
+          try {
+            const errJson = await response.json();
+            if (errJson.detail) detail = errJson.detail;
+          } catch (_) { /* abaikan jika body bukan JSON */ }
+          throw new Error(detail);
+        }
+
+        const data = await response.json();
+        renderResults(data);
+
+      } catch (err) {
+        console.error(err);
+        if (err.name === "TypeError") {
+          renderError("Gagal terhubung ke server backend. Pastikan API FastAPI sedang berjalan di " + API_BASE_URL);
+        } else {
+          renderError(err.message || "Terjadi kesalahan tak terduga.");
+        }
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const query = input.value.trim();
+      if (!query) return;
+      performSearch(query);
+    });
+  </script>
+</body>
+
+</html>
